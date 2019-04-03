@@ -482,6 +482,163 @@ describe('api: /forms/:id/submissions', () => {
             })))));
   });
 
+  describe('/:instanceId.xml PUT', () => {
+    it('should return notfound if the form does not exist', testService((service) =>
+      service.login('alice', (asAlice) =>
+        asAlice.put('/v1/projects/1/forms/nonexistent/submissions/one.xml')
+          .send(testData.instances.simple.one)
+          .set('Content-Type', 'text/xml')
+          .expect(404))));
+
+    it('should reject if the user cannot submit', testService((service) =>
+      service.login('chelsea', (asChelsea) =>
+        asChelsea.put('/v1/projects/1/forms/simple/submissions/one.xml')
+          .send(testData.instances.simple.one)
+          .set('Content-Type', 'text/xml')
+          .expect(403))));
+
+    it('should reject if the form is not taking submissions', testService((service) =>
+      service.login('alice', (asAlice) =>
+        asAlice.patch('/v1/projects/1/forms/simple')
+          .send({ state: 'closed' })
+          .expect(200)
+          .then(() => asAlice.put('/v1/projects/1/forms/simple/submissions/one.xml')
+            .send(testData.instances.simple.one)
+            .set('Content-Type', 'application/xml')
+            .expect(409)))));
+
+    it('should reject if the submission body is not valid xml', testService((service) =>
+      service.login('alice', (asAlice) =>
+        asAlice.put('/v1/projects/1/forms/simple/submissions/one.xml')
+          .send('<aoeu')
+          .set('Content-Type', 'text/xml')
+          .expect(400)
+          .then(({ body }) => {
+            body.code.should.equal(400.2);
+            body.details.field.should.match(/form ID xml attribute/i);
+          }))));
+
+    it('should reject if the form ids do not match', testService((service) =>
+      service.login('alice', (asAlice) =>
+        asAlice.put('/v1/projects/1/forms/simple/submissions/one.xml')
+          .send(testData.instances.withrepeat.one)
+          .set('Content-Type', 'text/xml')
+          .expect(400)
+          .then(({ body }) => {
+            body.code.should.equal(400.8);
+            body.details.reason.should.match(/did not match.*url/i);
+          }))));
+
+    it('should reject if the instance ids do not match', testService((service) =>
+      service.login('alice', (asAlice) =>
+        asAlice.put('/v1/projects/1/forms/simple/submissions/two.xml')
+          .send(testData.instances.withrepeat.one)
+          .set('Content-Type', 'text/xml')
+          .expect(400)
+          .then(({ body }) => {
+            body.code.should.equal(400.8);
+            body.details.reason.should.match(/did not match.*url/i);
+          }))));
+
+    it('should reject if the form is not taking submissions', testService((service) =>
+      service.login('alice', (asAlice) =>
+        asAlice.patch('/v1/projects/1/forms/simple')
+          .send({ state: 'closed' })
+          .expect(200)
+          .then(() => asAlice.put('/v1/projects/1/forms/simple/submissions/one.xml')
+            .send(testData.instances.simple.one)
+            .set('Content-Type', 'text/xml')
+            .expect(409)
+            .then(({ body }) => {
+              body.code.should.equal(409.2);
+              body.message.should.match(/not currently accepting submissions/);
+            })))));
+
+    it('should reject if the form and submission versions do not match', testService((service) =>
+      service.login('alice', (asAlice) =>
+        asAlice.put('/v1/projects/1/forms/simple/submissions/one.xml')
+          .send(Buffer.from('<data id="simple" version="-1"><meta><instanceID>one</instanceID></meta></data>'))
+          .set('Content-Type', 'text/xml')
+          .expect(400)
+          .then(({ body }) => {
+            body.code.should.equal(400.8);
+            body.details.reason.should.match(/outdated version/);
+          }))));
+
+    it('should create if all details are provided', testService((service) =>
+      service.login('alice', (asAlice) =>
+        asAlice.put('/v1/projects/1/forms/simple/submissions/one.xml')
+          .send(testData.instances.simple.one)
+          .set('Content-Type', 'text/xml')
+          .expect(200)
+          .then(({ body }) => {
+            body.should.be.a.Submission();
+            body.createdAt.should.be.a.recentIsoDate();
+            body.submitter.should.equal(5);
+          }))));
+
+    it('should update if all details are provided', testService((service) =>
+      service.login('alice', (asAlice) =>
+        asAlice.put('/v1/projects/1/forms/simple/submissions/one.xml')
+          .send(testData.instances.simple.one)
+          .set('Content-Type', 'text/xml')
+          .expect(200)
+          .then(() => asAlice.put('/v1/projects/1/forms/simple/submissions/one.xml')
+            .send(testData.instances.simple.one.replace(/Alice/, 'Alicia'))
+            .set('Content-Type', 'text/xml')
+            .expect(200)
+            .then(() => asAlice.get('/v1/projects/1/forms/simple/submissions/one')
+              .set('X-Extended-Metadata', true)
+              .expect(200)
+              .then(({ body }) => {
+                /Alicia/.test(body.xml).should.equal(true);
+              }))))));
+
+    it('should create expected attachments', testService((service) =>
+      service.login('alice', (asAlice) =>
+        asAlice.post('/v1/projects/1/forms')
+          .set('Content-Type', 'application/xml')
+          .send(testData.forms.binaryType)
+          .expect(200)
+          .then(() => asAlice.put('/v1/projects/1/forms/binaryType/submissions/both.xml')
+            .send(testData.instances.binaryType.both)
+            .set('Content-Type', 'text/xml')
+            .expect(200)
+            .then(() => asAlice.get('/v1/projects/1/forms/binaryType/submissions/both/attachments')
+              .expect(200)
+              .then(({ body }) => {
+                body.should.eql([
+                  { name: 'here_is_file2.jpg', exists: false },
+                  { name: 'my_file1.mp4', exists: false }
+                ]);
+              }))))));
+
+    // TODO: need to answer the question of whether this API should actually behave like this,
+    // or if it should remove the no-longer-implied attachments.
+    it('should update expected attachments', testService((service) =>
+      service.login('alice', (asAlice) =>
+        asAlice.post('/v1/projects/1/forms')
+          .set('Content-Type', 'application/xml')
+          .send(testData.forms.binaryType)
+          .expect(200)
+          .then(() => asAlice.put('/v1/projects/1/forms/binaryType/submissions/test.xml')
+            .send(testData.instances.binaryType.one.replace('one', 'test'))
+            .set('Content-Type', 'text/xml')
+            .expect(200)
+            .then(() => asAlice.put('/v1/projects/1/forms/binaryType/submissions/test.xml')
+              .send(testData.instances.binaryType.two.replace('two', 'test'))
+              .set('Content-Type', 'text/xml')
+              .expect(200)
+              .then(() => asAlice.get('/v1/projects/1/forms/binaryType/submissions/test/attachments')
+                .expect(200)
+                .then(({ body }) => {
+                  body.should.eql([
+                    { name: 'here_is_file2.jpg', exists: false },
+                    { name: 'my_file1.mp4', exists: false }
+                  ]);
+                })))))));
+  });
+
   describe('/:instanceId.xml GET', () => {
     it('should return submission details', testService((service) =>
       service.login('alice', (asAlice) =>
