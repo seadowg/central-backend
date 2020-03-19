@@ -9,6 +9,12 @@ migrations: node_modules
 
 base: node_modules migrations
 
+create_db: node_modules
+	node script/create_db.js
+
+drop_db: node_modules
+	node script/drop_db.js
+
 run: base
 	node lib/bin/run-server.js
 
@@ -36,4 +42,3 @@ run-multi: base
 	node node_modules/naught/lib/main.js start --worker-count 4 lib/bin/run-server.js
 stop-multi:
 	node node_modules/naught/lib/main.js stop
-
